@@ -1,0 +1,113 @@
+version: '3.4'
+
+networks:
+  monitoring:
+    driver: bridge
+    
+volumes:
+  prometheus_data: {}
+  grafana_data: {}
+
+services:
+  
+  pyweb:
+    image: pyweb
+    build:
+      context: ./pythonweb
+      dockerfile: Dockerfile
+    ports:
+      - 4444:4444
+    labels:
+    - "traefik.enable=true"
+    - "traefik.http.routers.pyweb.rule=(Host(`kartaca.localhost`) && Path(`/pythonapp`))"
+    - "traefik.http.routers.pyweb.entrypoints=http"
+    - "traefik.http.services.pyweb.loadbalancer.server.port=4444"
+    - "traefik.http.middlewares.pythonapp.replacepath.path=/staj"
+    - "traefik.http.routers.pyweb.middlewares=pythonapp@docker"
+
+  goweb:
+    image: goweb
+    build:
+      context: ./goweb
+      dockerfile: Dockerfile
+    ports:
+      - 5555:5555
+    labels:
+    - "traefik.enable=true"
+    - "traefik.http.routers.goweb.rule=(Host(`kartaca.localhost`) && Path(`/goapp`))"
+    - "traefik.http.routers.goweb.entrypoints=http"
+    - "traefik.http.services.goweb.loadbalancer.server.port=5555"
+    - "traefik.http.middlewares.goapp.replacepath.path=/staj"
+    - "traefik.http.routers.goweb.middlewares=goapp@docker"
+
+  mongodb:
+    image: mongo:latest
+    restart: always
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=eng
+      - MONGO_INITDB_ROOT_PASSWORD=EyQiJ5QwyApBUjg3
+    volumes:
+      - ./mongodb/mongo-init.js:/docker-entrypoint-initdb.d/mongo-init.js
+
+
+  traefik:
+    image: traefik
+    command: 
+      - --providers.docker=true
+    ports:
+      - 80:80
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock  
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    restart: unless-stopped
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    ports:
+      - 9100:9100
+
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    ports:
+      - 9090:9090
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    ports:
+    - 8080:8080
+    volumes:
+    - /:/rootfs:ro
+    - /var/run:/var/run:rw
+    - /sys:/sys:ro
+    - /var/lib/docker/:/var/lib/docker:ro
+
+  grafana:
+    image: grafana/grafana
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+    restart: unless-stopped
+    ports:
+      - 3000:3000
